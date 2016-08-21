@@ -133,6 +133,11 @@ export class Analyzer {
     return this._telemetryTracker.getMeasurements();
   }
 
+  clearCaches(): void {
+    this._parsedDocuments.clear();
+    this._scannedDocuments.clear();
+  }
+
   private async _scanResolved(resolvedUrl: string, contents?: string):
       Promise<ScannedDocument> {
     const cachedResult = this._scannedDocuments.get(resolvedUrl);
@@ -263,7 +268,7 @@ export class Analyzer {
       warnings.push({
         code: 'could-not-load',
         message: `Unable to load import: ${error.message || error}`,
-        sourceRange: scannedImport.sourceRange,
+        sourceRange: scannedImport.urlSourceRange || scannedImport.sourceRange,
         severity: Severity.ERROR
       });
       return null;
