@@ -15,10 +15,11 @@
 import * as child_process from 'child_process';
 import * as util from 'util';
 
-import {SourceRange} from './ast/ast';
+import {SourceRange} from '../ast/ast';
+import {FSUrlLoader} from '../url-loader/fs-url-loader';
+import {PackageUrlResolver} from '../url-loader/package-url-resolver';
+
 import {BaseEditor, EditorService, SourcePosition, TypeaheadCompletion, Warning} from './editor-service';
-import {FSUrlLoader} from './url-loader/fs-url-loader';
-import {PackageUrlResolver} from './url-loader/package-url-resolver';
 
 interface RequestWrapper {
   id: number;

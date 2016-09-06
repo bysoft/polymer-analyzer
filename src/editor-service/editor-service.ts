@@ -14,10 +14,9 @@
 
 import * as parse5 from 'parse5';
 
-import {Analyzer, Options as AnalyzerOptions} from './analyzer';
-import {Document, Element, Property, ScannedProperty, SourceRange} from './ast/ast';
-import {ParsedHtmlDocument} from './html/html-document';
-
+import {Analyzer, Options as AnalyzerOptions} from '../analyzer';
+import {Document, Element, Property, ScannedProperty, SourceRange} from '../ast/ast';
+import {ParsedHtmlDocument} from '../html/html-document';
 
 export type TypeaheadCompletion = ElementCompletion | AttributesCompletion;
 export interface ElementCompletion {
