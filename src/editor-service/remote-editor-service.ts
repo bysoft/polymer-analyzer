@@ -13,94 +13,26 @@
  */
 
 import * as child_process from 'child_process';
+import * as path from 'path';
 import * as util from 'util';
 
 import {SourceRange} from '../ast/ast';
-import {FSUrlLoader} from '../url-loader/fs-url-loader';
-import {PackageUrlResolver} from '../url-loader/package-url-resolver';
 
+import {Request, RequestWrapper, ResponseWrapper} from './editor-server';
 import {EditorService, SourcePosition, TypeaheadCompletion, Warning} from './editor-service';
-import {LocalEditorService} from './local-editor-service';
+
 
 /**
- * The remote editor service protocol is request/response based.
- * Requests and responses are JSON serialized objects.
- *
- * Every request must have a unique identifier. For every request there
- * will be at most one response with the corresponding identifier. Responses
- * may come in any order.
- *
- * Responses are modeled on settled Promise values. A response is either
- * successful and resolved or unsuccessful and rejected.
- *
- * The types of requests and responses obey the EditorService interface, with
- * some modification of method calls for the JSON format. See the Request
- * type for more information.
+ * Runs the editor server in a new node process and exposes a promise based
+ * request API for communicating with it.
  */
-interface RequestWrapper {
-  id: number;
-  value: Request;
-}
-interface ResponseWrapper {
-  id: number;
-  value: SettledValue;
-}
-type SettledValue = Resolution | Rejection;
-interface Resolution {
-  kind: 'resolution';
-  resolution: any;
-}
-interface Rejection {
-  kind: 'rejection';
-  rejection: string;
-}
-
-
-type Request = InitRequest | FileChangedRequest | GetWarningsRequest |
-    GetDocumentationRequest | GetDefinitionRequest |
-    GetTypeaheadCompletionsRequest | ClearCachesRequest;
-interface InitRequest {
-  kind: 'init';
-  basedir: string;
-}
-interface FileChangedRequest {
-  kind: 'fileChanged';
-  localPath: string;
-  contents?: string;
-}
-interface GetWarningsRequest {
-  kind: 'getWarningsFor';
-  localPath: string;
-}
-interface GetDocumentationRequest {
-  kind: 'getDocumentationFor';
-  localPath: string;
-  position: SourcePosition;
-}
-interface GetDefinitionRequest {
-  kind: 'getDefinitionFor';
-  localPath: string;
-  position: SourcePosition;
-}
-interface GetTypeaheadCompletionsRequest {
-  kind: 'getTypeaheadCompletionsFor';
-  localPath: string;
-  position: SourcePosition;
-}
-interface ClearCachesRequest {
-  kind: 'clearCaches';
-}
-
-/**
- * Runs this file (remote-editor-service.js) in a new node process and
- * exposes a promise based request API for communicating with it.
- */
-class SelfChannel {
+class EditorServerChannel {
   private _child: child_process.ChildProcess;
   private _idCounter = 0;
   private _outstandingRequests = new Map<number, Deferred<any>>();
   constructor() {
-    this._child = child_process.fork(__filename, [], {});
+    const serverJsFile = path.join(__dirname, 'editor-server.js');
+    this._child = child_process.fork(serverJsFile, [], {});
     this._child.addListener(
         'message', (m: ResponseWrapper) => this._handleResponse(m));
   }
@@ -143,13 +75,12 @@ class SelfChannel {
 }
 
 /**
- * Provides a similar interface to EditorServer, but implemented out of process.
- *
- * This class runs in-process and communicates via SelfChannel with
- * EditorServer, which runs in the child process.
+ * Runs in-process and communicates to the editor server, which
+ * runs in a child process. Exposes the same interface as the
+ * LocalEditorService.
  */
 export class RemoteEditorService extends EditorService {
-  private _channel = new SelfChannel();
+  private _channel = new EditorServerChannel();
   constructor(basedir: string) {
     super();
     this._channel.request({kind: 'init', basedir});
@@ -188,48 +119,6 @@ export class RemoteEditorService extends EditorService {
   }
 }
 
-/**
- * Runs out of process and handles decoded Requests.
- */
-class EditorServer {
-  private _localEditorService: LocalEditorService;
-  constructor(basedir: string) {
-    this._localEditorService = new LocalEditorService({
-      urlLoader: new FSUrlLoader(basedir),
-      urlResolver: new PackageUrlResolver()
-    });
-  }
-
-  async handleMessage(message: Request): Promise<any> {
-    switch (message.kind) {
-      case 'getWarningsFor':
-        return this._localEditorService.getWarningsFor(message.localPath);
-      case 'fileChanged':
-        await this._localEditorService.fileChanged(
-            message.localPath, message.contents);
-        return;
-      case 'init':
-        throw new Error('Already initialized!');
-      case 'getDefinitionFor':
-        return this._localEditorService.getDefinitionFor(
-            message.localPath, message.position);
-      case 'getDocumentationFor':
-        return this._localEditorService.getDocumentationFor(
-            message.localPath, message.position);
-      case 'getTypeaheadCompletionsFor':
-        return this._localEditorService.getTypeaheadCompletionsFor(
-            message.localPath, message.position);
-      case 'clearCaches':
-        return this._localEditorService.clearCaches();
-      default:
-        // This assignment makes it a type error if we don't handle all possible
-        // values of `message.kind`.
-        const never: never = message;
-        throw new Error(`Got unknown kind of message: ${util.inspect(never)}`);
-    }
-  }
-}
-
 interface Deferred<V> {
   resolve: (resp: V) => void;
   reject: (err: any) => void;
@@ -244,43 +133,4 @@ function makeDeferred<V>(): Deferred<V> {
     reject = rej;
   });
   return {resolve, reject, promise};
-}
-
-if (!module.parent) {
-  // We're in the child process! Or we're otherwise being run directly via
-  // `node lib/remote-editor-service.js`
-  // We're definitely not being imported as a library by other node code.
-
-  let server: EditorServer;
-  process.once('message', (initRequest: RequestWrapper) => {
-    if (initRequest.value.kind !== 'init') {
-      process.send(<ResponseWrapper>{
-        id: initRequest.id,
-        value: {
-          kind: 'rejection',
-          rejection: `Expected first message to be 'init', ` +
-              `got ${initRequest.value.kind}`
-        }
-      });
-      return;
-    }
-    server = new EditorServer(initRequest.value.basedir);
-
-    process.on('message', async(request: RequestWrapper) => {
-      const result = await getSettledValue(request.value);
-      process.send(<ResponseWrapper>{id: request.id, value: result});
-    });
-  });
-
-  async function getSettledValue(message: Request): Promise<SettledValue> {
-    try {
-      const value = await server.handleMessage(message);
-      return {kind: 'resolution', resolution: value};
-    } catch (e) {
-      return {
-        kind: 'rejection',
-        rejection: e.stack || e.message || e.toString()
-      };
-    }
-  }
 }
