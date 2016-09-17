@@ -23,7 +23,8 @@ import {HtmlScanner} from '../html/html-scanner';
 const p = dom5.predicates;
 
 const isCssImportNode = p.AND(
-    p.hasTagName('link'), p.hasSpaceSeparatedAttrValue('rel', 'import'), p.hasAttrValue('type', 'css'), p.parentMatches(p.hasTagName('dom-module')));
+    p.hasTagName('link'), p.hasSpaceSeparatedAttrValue('rel', 'import'),
+    p.hasAttrValue('type', 'css'), p.parentMatches(p.hasTagName('dom-module')));
 
 export class CssImportScanner implements HtmlScanner {
   async scan(
@@ -37,7 +38,8 @@ export class CssImportScanner implements HtmlScanner {
         const href = dom5.getAttribute(node, 'href');
         const importUrl = resolveUrl(document.url, href);
         imports.push(new ScannedImport(
-            'css-import', importUrl, document.sourceRangeForNode(node)));
+            'css-import', importUrl, document.sourceRangeForNode(node),
+            document.sourceRangeForAttribute(node, 'href')));
       }
     });
     return imports;
